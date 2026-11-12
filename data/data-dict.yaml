@@ -1,0 +1,134 @@
+$version: 0.1.0
+$learn_more: https://data-dict.tidyverse.org/
+
+name: narw_upcalls
+label: NARW up-call detections, DCLDE 2013
+description: >
+  Seven days of North Atlantic right whale up-call detections from a single
+  recorder channel in Stellwagen Bank National Marine Sanctuary, 28 March to
+  3 April 2009. The one dataset used throughout the workshop.
+details: |
+  Source: the DCLDE 2013 workshop dataset, NOAA NCEI
+  (<https://www.ncei.noaa.gov/access/metadata/landing-page/bin/iso?id=gov.noaa.ncei.pad%3ADCLDE_2013>).
+  Public; fine to share and redistribute.
+
+  Recorder location (NOPP6, from the deployment metadata, `DEPLOY_LAT` and
+  `DEPLOY_LON`): 42.066 N, 70.2719 W. Sunset there in late March 2009 is
+  about 18:05 UTC−5, civil dusk about 18:35.
+
+  The raw log is `raw/dclde_2013_nefsc_sbnms_200903_nopp6_ch10_detections_NEFSC_SBNMS_200903_NOPP6_CH10_upcall-detection-log.csv`.
+  The build is deliberately light-touch: nothing is removed, re-sorted or
+  de-duplicated. Rows that need attention before analysis are documented
+  on the table below, and finding them is part of the exercises.
+origin: build_narw_upcalls.R
+
+tables:
+  - name: narw_upcalls
+    description: >
+      Each row is one logged up-call detection. The population is every row
+      in the raw log (NOPP6 deployment, channel 10), including calls marked
+      `Possibly_Detected` and five pairs that share a start time.
+    details: |
+      Rows are in log order, not time order. The log was written as one file
+      per local day: `selection` restarts at 1 at each new file, and `day`
+      matches those file blocks exactly. Within a file, some passages were
+      logged out of sequence, so `time` steps backwards 148 times, by anything
+      from 2 seconds to nearly 24 hours. Sort by `time` before computing gaps,
+      rates or anything self-exciting.
+
+      Five pairs of rows share an identical start time. Four are both
+      `Detected`; one pairs `Detected` with `Possibly_Detected`. They are
+      probably logged twice, but that is a judgement, not a fact, so they are
+      left in.
+    columns:
+      - name: selection
+        label: Selection number
+        type: number(ordinal)
+        constraints: [required]
+        description: >
+          The analyst's selection number within one day's log file. Restarts at
+          1 for each file, so it is not unique across the table.
+        range: [1, 2061]
+      - name: time
+        label: Call start
+        type: datetime
+        time_zone: UTC
+        constraints: [required]
+        description: >
+          Start of the call, as an instant in time, displayed in **UTC**. Local
+          time at the recorder is 5 hours behind. Anything by time of day
+          (`hour(time)`, a daily cycle) is shifted 5 hours unless you convert
+          first, e.g. `with_tz(time, "Etc/GMT+5")`.
+        details: |
+          The raw log records every timestamp with a fixed `-05:00` offset
+          (EST). In late March 2009 the local clock was on EDT (`-04:00`), so
+          the logged offset is a fixed standard-time offset rather than the
+          wall clock. The instant itself is unambiguous. `Etc/GMT+5` is
+          UTC−5; the sign is inverted by IANA convention.
+        range: [2009-03-28T05:03:08, 2009-04-04T03:26:25]
+      - name: time_end
+        label: Call end
+        type: datetime
+        time_zone: UTC
+        constraints: [required]
+        description: >
+          End of the call, as an instant in UTC. Calls last 1 to 4 seconds;
+          start and end are logged to the whole second.
+        range: [2009-03-28T05:03:11, 2009-04-04T03:26:27]
+      - name: freq_low
+        label: Lowest frequency
+        type: number(quantity)
+        units: Hz
+        constraints: [required]
+        description: Lower bound of the analyst's selection box on the spectrogram.
+        range: [17.964, 256.2]
+        examples: [17.964, 71.625, 84.4, 99.174, 256.2]
+      - name: freq_high
+        label: Highest frequency
+        type: number(quantity)
+        units: Hz
+        constraints: [required]
+        description: Upper bound of the analyst's selection box on the spectrogram.
+        range: [107.784, 584.022]
+        examples: [107.784, 181.818, 206.612, 236.915, 584.022]
+      - name: confidence
+        label: Detection confidence
+        type: enum
+        values:
+          Detected: The analyst was confident this is a right whale up-call.
+          Possibly_Detected: The analyst thought this might be an up-call.
+        constraints: [required]
+        description: >
+          5,905 `Detected` and 2,351 `Possibly_Detected` (28%). Whether to keep
+          the second group is a modelling decision; make it explicitly.
+      - name: day
+        label: Deployment day
+        type: number(ordinal)
+        constraints: [required]
+        description: >
+          Day of the deployment, 1 = 28 March 2009, counted by local (EST) date.
+          Note this is local while `time` displays in UTC, so a call from
+          19:00 local onwards is still on the same `day` but shows the next
+          UTC date.
+        range: [1, 7]
+    constraints:
+      - assert: time_end >= time
+        description: A call can't end before it starts.
+    todo: |
+      - Day 7's last call is at 22:26 local. Confirm from the DCLDE 2013
+        metadata whether recording ran to midnight, or whether day 7 is partial.
+      - No `source`: the data are an .rds file and the `data-dict` validator
+        reads Parquet only, so this dictionary validates as a spec, not
+        against the data.
+
+glossary:
+  up-call: >
+    The stereotyped contact call of the North Atlantic right whale: a tonal
+    sweep upward from roughly 50–100 Hz to 150–250 Hz, roughly a second long.
+  DCLDE: >
+    Detection, Classification, Localization and Density Estimation of Marine
+    Mammals using Passive Acoustics: a workshop series that publishes
+    benchmark acoustic datasets.
+  NOPP6: >
+    The deployment label in the DCLDE 2013 file names. The file names say
+    channel 10; the log's own `Channel` column says 1 throughout.
