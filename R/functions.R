@@ -39,13 +39,15 @@ pcount <- function(y, mu, theta) {
 }
 
 # Randomized quantile residuals (Dunn & Smyth 1996): standard normal if the
-# model is right, whatever the count distribution.
+# model is right, whatever the count distribution. A badly overdispersed
+# Poisson fit puts some counts so far in the tail that the CDF rounds to 0
+# or 1, giving infinite residuals; those are capped at +/-8.
 rq_resid <- function(fit) {
   y <- fit$y
   mu <- fitted(fit)
   theta <- nb_theta(fit)
   u <- runif(length(y), pcount(y - 1, mu, theta), pcount(y, mu, theta))
-  qnorm(u)
+  pmin(pmax(qnorm(u), -8), 8)
 }
 
 # Observed and expected number of bins per count class, for a hanging
