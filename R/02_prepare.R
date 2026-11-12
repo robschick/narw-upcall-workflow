@@ -20,15 +20,17 @@ counts <- calls |>
 stopifnot(sum(counts$y) == nrow(calls), nrow(counts) == length(bins))
 
 mid <- counts$bin + minutes(cfg$bin_minutes) / 2
-binned <- counts |>
+series <- counts |>
   mutate(
     day      = as.integer(as_date(bin) - as_date(effort[1])) + 1,
     hour     = hour(mid) + minute(mid) / 60,                        # time of day, 0-24
     t        = as.numeric(mid - effort[1], units = "hours"),         # hours since start
     lag_term = log1p(lag(y))                                         # previous bin
-  ) |>
-  # Drop the first bin (no previous bin) so every model uses the same rows.
-  filter(!is.na(lag_term))
+  )
+
+# Drop the first bin (no previous bin) so every model uses the same rows.
+binned <- filter(series, !is.na(lag_term))
 
 dir.create(cfg$paths$output, showWarnings = FALSE, recursive = TRUE)
-write_rds(binned, file.path(cfg$paths$output, "binned.rds"))
+write_rds(series, file.path(cfg$paths$output, "series.rds"))   # every bin, for plots
+write_rds(binned, file.path(cfg$paths$output, "binned.rds"))   # model rows

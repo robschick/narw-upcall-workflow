@@ -9,6 +9,11 @@ paths:
 # Local standard time at the recorder (UTC-5; IANA inverts the sign).
 local_tz: Etc/GMT+5
 
+# Recorder position (NOPP6 deployment metadata), for sunset and dusk times.
+recorder:
+  lat: 42.066
+  lon: -70.2719
+
 # Recording effort, in local standard time: 7 full days, no gaps
 # (NCEI DCLDE 2013 metadata; Shiu et al. 2020, Table 1).
 effort:

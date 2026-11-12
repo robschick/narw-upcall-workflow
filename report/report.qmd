@@ -1,0 +1,362 @@
+---
+title: "Right whale up-calls on Stellwagen Bank: a model ladder"
+subtitle: "One week of DCLDE 2013 detections, 28 March to 3 April 2009"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+    code-tools: true
+    fig-width: 8
+    fig-height: 4
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+# Rendered by R/05_report.R with the repo root as the working directory.
+# Nothing is fitted here: the report only reads what the scripts saved.
+cfg <- yaml::read_yaml("config.yml")
+source("R/00_packages.R")
+source("R/functions.R")
+
+out <- function(f) read_rds(file.path(cfg$paths$output, f))
+narw_upcalls <- read_rds(cfg$paths$table)
+series <- out("series.rds")
+binned <- out("binned.rds")
+fits <- out("fits.rds")
+cmp <- out("comparison.rds")
+
+best <- fits[[cmp$chosen]]
+cols <- pal_models(names(fits))
+brew <- RColorBrewer::brewer.pal(8, "Dark2")
+theme_set(theme_minimal(base_size = 12))
+n_kept <- sum(narw_upcalls$confidence %in% cfg$confidence)
+```
+
+## The question
+
+A single bottom-mounted recorder in Stellwagen Bank National Marine Sanctuary
+logged every North Atlantic right whale up-call an analyst could find over
+seven days. We turn that list of calls into a count of calls per
+`r cfg$bin_minutes`-minute bin and ask three things of the time series:
+
+1. Does the calling rate **change across the week**?
+2. Is there a **daily cycle**?
+3. Do calls come in **bouts**, more clustered than a steady rate would give?
+
+Each question gets one rung on a ladder of models, and each rung is judged
+against the one below it.
+
+## The data
+
+`R/01_build.R` reads the raw log and checks it against `data/data-dict.yaml`
+before writing anything: the row counts, column ranges, `time_end >= time`,
+the 148 places where the log steps backwards in time, the five duplicated
+start times, and that `day` matches the local date of every call. If any
+check fails, the workflow stops there.
+
+**Only calls marked `Detected` are used** (`r format(n_kept, big.mark = ",")`
+of `r format(nrow(narw_upcalls), big.mark = ",")` rows). The
+`r format(sum(narw_upcalls$confidence == "Possibly_Detected"), big.mark = ",")`
+`Possibly_Detected` calls are left out; change `confidence` in `config.yml` to
+include them. Four pairs of `Detected` calls share an identical start time and
+are probably logged twice. They are kept: four calls out of
+`r format(n_kept, big.mark = ",")` cannot move these models.
+
+The recorder ran continuously for all seven days (NCEI metadata; Shiu et al.
+2020, Table 1), so every hour carries the same effort and no offset is needed.
+
+The per-day totals don't match those published by Shiu et al. (2020,
+*Sci Rep* 10:607) for the same recordings, in either direction. Their
+annotation set is evidently not the same as this log; we use the log as
+published.
+
+```{r}
+#| label: tbl-days
+#| tbl-cap: "Calls per local day in this log, against Shiu et al. (2020)."
+narw_upcalls |>
+  count(day, confidence) |>
+  pivot_wider(names_from = confidence, values_from = n) |>
+  mutate(Total = Detected + Possibly_Detected,
+         `Shiu et al. 2020` = c(767, 2280, 1663, 2206, 1328, 545, 894),
+         Date = format(as_date(cfg$effort$start) + day - 1, "%a %d %b")) |>
+  select(Date, Detected, Possibly_Detected, Total, `Shiu et al. 2020`) |>
+  knitr::kable(format.args = list(big.mark = ","))
+```
+
+## A first look
+
+```{r}
+#| label: fig-heatmap
+#| fig-cap: "Calls per hour, by local day and hour of day (EST)."
+#| fig-height: 3.5
+series |>
+  mutate(date = format(as_date(bin), "%a %d %b") |> fct_inorder() |> fct_rev(),
+         hr = floor(hour)) |>
+  ggplot(aes(hr, date, fill = y)) +
+  geom_tile(colour = "white") +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1, name = "Calls") +
+  scale_x_continuous(breaks = seq(0, 21, 3), expand = c(0, 0)) +
+  labs(x = "Hour of day (EST)", y = NULL)
+```
+
+```{r}
+#| label: fig-series
+#| fig-cap: "Calls per hour across the week."
+ggplot(series, aes(bin, y)) +
+  geom_col(fill = brew[3], width = 3000) +
+  labs(x = NULL, y = "Calls per hour")
+```
+
+Calling is strongly uneven. Busy hours reach `r max(series$y)` calls while
+`r sum(series$y == 0)` hours have none, and a busy hour tends to be followed
+by another: the correlation between one hour's count and the next is
+`r round(acf(series$y, plot = FALSE)$acf[2], 2)`.
+
+## The model ladder
+
+All models are generalized additive models fitted with `mgcv::gam()` by
+REML. The response is the count in each hour. The first hour is dropped from
+every model because it has no previous hour, so all five see the same
+`r nrow(binned)` rows and their AIC values can be compared directly.
+
+| Model | Adds | Formula (log link) |
+|---|---|---|
+| M0 | A constant rate | `y ~ 1`, Poisson |
+| M1 | Change across the week | `+ s(t, k = 7)` |
+| M2 | A daily cycle | `+ s(hour, bs = "cc")` |
+| M3 | Extra variability between hours | negative binomial instead of Poisson |
+| M4 | Bouts: the previous hour feeds into this one | `+ log1p(y[t-1])` |
+
+- **M0** says calls arrive at one steady rate all week. It is the yardstick.
+- **M1** lets the rate drift smoothly over the week. `t` is hours since the
+  start; `k = 7` allows roughly one bend per day.
+- **M2** adds a daily cycle. `hour` is local standard time, and the cyclic
+  spline (`bs = "cc"`) joins 23:59 smoothly to 00:00.
+- **M3** keeps M2's terms but swaps the Poisson for a negative binomial. A
+  Poisson's variance equals its mean; the negative binomial lets hours vary
+  more than that, which bursty calling makes almost certain.
+- **M4** adds the log of last hour's count (plus one) as a predictor. This is
+  the simplest way to let calling feed on itself: an observation-driven
+  model, using only base mgcv.
+
+## Comparing the models
+
+We use three checks, because each can be fooled on its own.
+
+### AIC
+
+AIC rewards fit and penalizes complexity (here the effective degrees of
+freedom of the smooths). Akaike weights turn ΔAIC into the relative support
+for each model within this set.
+
+### Out-of-sample prediction
+
+Leave-one-day-out cross-validation drops one day, refits each model on the
+other six, and scores how probable the held-out day's counts are under the
+refitted model (its log-likelihood; higher is better). Repeating for all seven
+days and summing gives a single score that rewards prediction rather than fit.
+
+M4 is scored **hour-ahead**: when predicting a held-out hour, it is given the
+real count from the hour before. That is the standard way to score a model of
+this kind, but it is information the other models don't get.
+
+```{r}
+#| label: tbl-compare
+#| tbl-cap: "Model comparison, best first. ΔCV is the shortfall in summed held-out log-likelihood from the best model."
+cmp$comparison |>
+  transmute(Model = model, EDF = edf, AIC, ΔAIC = dAIC, `Akaike weight` = weight,
+            `CV log-lik` = cv_loglik, ΔCV = d_cv) |>
+  knitr::kable(digits = c(0, 1, 0, 1, 3, 0, 1))
+```
+
+```{r}
+#| label: fig-cv
+#| fig-cap: "Held-out log-likelihood for each day left out. Higher is better."
+ggplot(cmp$cv, aes(day, loglik, colour = model)) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = cols) +
+  scale_x_continuous(breaks = 1:7) +
+  labs(x = "Day held out", y = "Held-out log-likelihood", colour = "Model")
+```
+
+The Poisson models (M0–M2) are thousands of log-likelihood units behind the
+negative binomials, on every day. Adding smooth terms to a Poisson model
+can even *hurt* prediction: with the variance pinned to the mean, the
+smooths chase every burst and generalize badly to a day they haven't seen.
+Once the count distribution is right (M3), the smooths become sensible and
+adding last hour's count (M4) gains a further
+`r with(cmp$comparison, round(cv_loglik[model == "M4"] - cv_loglik[model == "M3"]))`
+log-likelihood units.
+
+### Residual checks
+
+For each model we compute **randomized quantile residuals** (Dunn & Smyth
+1996): if the model is right, they are standard normal whatever the count
+distribution. The Poisson models put some hours so far in the tail that the
+residual is infinite; those are capped at ±8 so the plots can show them.
+
+```{r}
+#| label: fig-acf
+#| fig-cap: "Autocorrelation of residuals at lags of 1 to 24 hours. The dashed band is ±1.96/√n; bars outside it are correlation the model has missed."
+#| fig-height: 5
+ci <- 1.96 / sqrt(nrow(binned))
+ggplot(cmp$resid_acf, aes(lag, acf, fill = model)) +
+  geom_hline(yintercept = c(-ci, ci), linetype = 2, colour = brew[8]) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~model) +
+  scale_fill_manual(values = cols) +
+  labs(x = "Lag (hours)", y = "Residual autocorrelation")
+```
+
+```{r}
+#| label: fig-rootogram
+#| fig-cap: "Hanging rootograms: bars are the observed number of hours in each count class (width 10), hung from the model's expected number (line). Bars ending above or below zero show where the model expects too many or too few hours. Square-root scale."
+#| fig-height: 5
+ggplot(cmp$rootogram) +
+  geom_rect(aes(xmin = count, xmax = count + 10,
+                ymin = sqrt(expected) - sqrt(observed), ymax = sqrt(expected)),
+            fill = brew[3], colour = "white") +
+  geom_line(aes(count + 5, sqrt(expected)), colour = brew[2], linewidth = 0.8) +
+  geom_hline(yintercept = 0, colour = brew[8]) +
+  facet_wrap(~model) +
+  labs(x = "Calls per hour", y = "√(number of hours)")
+```
+
+The rootograms show the Poisson models expecting almost no empty hours and
+almost no very busy ones; the negative binomials put both tails roughly where
+they belong. Residual autocorrelation at a lag of one hour falls from
+`r round(cmp$resid_acf$acf[cmp$resid_acf$model == "M0" & cmp$resid_acf$lag == 1], 2)`
+under M0 to
+`r round(cmp$resid_acf$acf[cmp$resid_acf$model == cmp$chosen & cmp$resid_acf$lag == 1], 2)`
+under `r cmp$chosen`, which is still above the dashed band: a one-hour
+memory captures much of the bout structure, but not all of it.
+
+## The chosen model: `r cmp$chosen`
+
+```{r}
+#| results: asis
+cat(
+  "**", cmp$chosen, "** has the best summed held-out log-likelihood. ",
+  if (cmp$agree) "AIC agrees: it also has the lowest AIC." else
+    paste0("**AIC disagrees**: it prefers ", cmp$comparison$model[which.min(cmp$comparison$AIC)],
+           ". We follow cross-validation, because it measures prediction on days the model has not seen."),
+  sep = ""
+)
+```
+
+```{r}
+#| label: smooths
+# Each smooth on the response scale: the factor by which it multiplies the
+# calling rate, with a 95% interval. Other terms are held at their averages.
+term_effect <- function(fit, var, grid) {
+  nd <- as_tibble(map(binned[c("t", "hour", "lag_term")], mean)) |>
+    slice(rep(1, length(grid))) |>
+    mutate("{var}" := grid)
+  p <- predict(fit, nd, type = "terms", se.fit = TRUE)
+  term <- grep(paste0("s\\(", var, "\\)"), colnames(p$fit))
+  tibble(x = grid, fit = exp(p$fit[, term]),
+         lo = exp(p$fit[, term] - 1.96 * p$se.fit[, term]),
+         hi = exp(p$fit[, term] + 1.96 * p$se.fit[, term]))
+}
+smooth_terms <- map_chr(best$smooth, \(s) s$term)
+```
+
+```{r}
+#| label: fig-trend
+#| fig-cap: "Change across the week: the factor by which the calling rate is multiplied, relative to the week's average. Shaded band is a 95% interval."
+#| eval: !expr '"t" %in% smooth_terms'
+effort_start <- ymd_hms(cfg$effort$start, tz = cfg$local_tz)
+term_effect(best, "t", seq(0, 168, length.out = 200)) |>
+  mutate(x = effort_start + dhours(x)) |>
+  ggplot(aes(x, fit)) +
+  geom_hline(yintercept = 1, colour = brew[8], linetype = 2) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = brew[1], alpha = 0.3) +
+  geom_line(colour = brew[1], linewidth = 1) +
+  scale_y_log10() +
+  labs(x = NULL, y = "Rate multiplier (log scale)")
+```
+
+```{r}
+#| label: fig-cycle
+#| fig-cap: "The daily cycle in local standard time (EST): the factor by which the calling rate is multiplied at each hour. Vertical lines mark the week's average sunset and civil dusk at the recorder."
+#| eval: !expr '"hour" %in% smooth_terms'
+sun <- suncalc::getSunlightTimes(
+  date = as_date(cfg$effort$start) + 0:6, lat = cfg$recorder$lat, lon = cfg$recorder$lon,
+  keep = c("sunset", "dusk"), tz = cfg$local_tz
+)
+to_hour <- function(x) mean(hour(x) + minute(x) / 60)
+sun_lines <- tibble(what = c("Sunset", "Civil dusk"), hour = c(to_hour(sun$sunset), to_hour(sun$dusk)))
+
+cycle <- term_effect(best, "hour", seq(0, 24, length.out = 200))
+ggplot(cycle, aes(x, fit)) +
+  geom_hline(yintercept = 1, colour = brew[8], linetype = 2) +
+  geom_vline(data = sun_lines, aes(xintercept = hour, linetype = what), colour = brew[2]) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = brew[1], alpha = 0.3) +
+  geom_line(colour = brew[1], linewidth = 1) +
+  scale_x_continuous(breaks = seq(0, 24, 3)) +
+  scale_y_log10() +
+  labs(x = "Hour of day (EST)", y = "Rate multiplier (log scale)", linetype = NULL)
+```
+
+```{r}
+#| label: fig-fitted
+#| fig-cap: "Observed calls per hour (bars) and the chosen model's fitted mean (line)."
+binned |>
+  mutate(fitted = fitted(best)) |>
+  ggplot(aes(bin)) +
+  geom_col(aes(y = y), fill = brew[3], alpha = 0.6, width = 3000) +
+  geom_line(aes(y = fitted), colour = brew[1], linewidth = 0.8) +
+  labs(x = NULL, y = "Calls per hour")
+```
+
+```{r}
+#| label: interpretation
+has_lag <- "lag_term" %in% names(coef(best))
+peak <- if ("hour" %in% smooth_terms) cycle$x[which.max(cycle$fit)] else NA
+```
+
+```{r}
+#| results: asis
+#| echo: false
+lines <- c(
+  if (!is.na(peak)) sprintf(
+    "- **Daily cycle.** Calling peaks at about %02d:%02d EST, with the rate %.1f times that of a typical hour at its peak and %.1f times at its lowest.",
+    floor(peak), round(60 * (peak %% 1)), max(cycle$fit), min(cycle$fit)),
+  if (has_lag) {
+    b <- coef(best)[["lag_term"]]
+    sprintf("- **Bouts.** The coefficient on `log1p(y[t-1])` is %.2f (SE %.2f): doubling last hour's calls multiplies this hour's expected rate by about %.2f.",
+            b, summary(best)$p.table["lag_term", "Std. Error"], 2^b)
+  },
+  if (nb_theta(best) < Inf) sprintf(
+    "- **Overdispersion.** The negative binomial θ is %.2f. The variance is μ + μ²/θ, so at the median of %d calls an hour the variance is about %.0f times what a Poisson would allow.",
+    nb_theta(best), as.integer(median(binned$y)), 1 + median(binned$y) / nb_theta(best))
+)
+cat(lines, sep = "\n")
+```
+
+### Caveats
+
+- One recorder, one week. The trend across the week describes these seven
+  days; it is not a forecast.
+- Detections are what an analyst found on a spectrogram. Calling rate and
+  detection rate are not separated here (noise, other sounds and analyst
+  attention all vary with time of day too).
+- M4's advantage in cross-validation comes partly from seeing the previous
+  hour's real count.
+- Residual autocorrelation remains under the chosen model; longer memory
+  (more lags, or a latent process model) is the next rung.
+
+## Reproducing this report
+
+Everything here is produced by `run_all.R` from the raw log and `config.yml`.
+Change `bin_minutes`, `confidence` or `models` there and run it again.
+
+```{r}
+#| label: session
+#| code-fold: false
+sessionInfo()
+```
