@@ -1,0 +1,37 @@
+# Settings for run_all.R. Paths are relative to the repo root.
+
+paths:
+  raw: data/raw/dclde_2013_nefsc_sbnms_200903_nopp6_ch10_detections_NEFSC_SBNMS_200903_NOPP6_CH10_upcall-detection-log.csv
+  table: data/narw_upcalls.rds
+  output: output
+  report: report/report.qmd
+
+# Local standard time at the recorder (UTC-5; IANA inverts the sign).
+local_tz: Etc/GMT+5
+
+# Recording effort, in local standard time: 7 full days, no gaps
+# (NCEI DCLDE 2013 metadata; Shiu et al. 2020, Table 1).
+effort:
+  start: "2009-03-28 00:00:00"
+  end: "2009-04-04 00:00:00"
+
+# Which detection confidence levels to analyse: Detected, Possibly_Detected.
+confidence: [Detected]
+
+# Width of each time bin, in minutes. Must divide 60 evenly or be a multiple of 60.
+bin_minutes: 60
+
+# Basis dimensions for the smooths.
+k_trend: 7    # trend across the week: about one degree of freedom per day
+k_hour: 12    # cyclic daily cycle
+
+# Models to fit, in ladder order. Remove a name to drop that rung.
+#   M0  Poisson, intercept only
+#   M1  + smooth trend across the week
+#   M2  + cyclic daily cycle
+#   M3  negative binomial instead of Poisson
+#   M4  + log1p(count in the previous bin)
+models: [M0, M1, M2, M3, M4]
+
+# Seed for the randomized quantile residuals.
+seed: 2009
