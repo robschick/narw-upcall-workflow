@@ -30,3 +30,6 @@ models:
   k_hour: 12    # basis size of the cyclic smooth of hour of day (GAMs)
   max_lag: 12   # bins of history in the self-exciting kernel (12 x 30 min = 6 h)
   k_lag: 8      # basis size of the self-exciting kernel
+
+# Seed for the randomised quantile residuals (the only random step).
+seed: 20090328
