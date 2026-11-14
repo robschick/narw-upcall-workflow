@@ -2,3 +2,5 @@
 .Rhistory
 .RData
 .DS_Store
+data/narw_upcalls.parquet
+output/

@@ -20,10 +20,20 @@ details: |
   The build is deliberately light-touch: nothing is removed, re-sorted or
   de-duplicated. Rows that need attention before analysis are documented
   on the table below, and finding them is part of the exercises.
-origin: build_narw_upcalls.R
+
+  Recording and annotation cover seven full local days, 28 March 00:00 to
+  4 April 00:00 EST, without gaps. The NCEI ISO record gives that window
+  (<https://www.ncei.noaa.gov/metadata/geoportal/rest/metadata/item/gov.noaa.ncei.pad%3ADCLDE_2013/xml>),
+  and NOAA's audio bucket holds 672 contiguous 15-minute files from
+  `NOPP6_EST_20090328_000000` to `NOPP6_EST_20090403_234500`. Day 7 is
+  complete: its last call at 22:26 local is a quiet spell, not the end of
+  effort.
+origin: R/01_build.R
 
 tables:
   - name: narw_upcalls
+    source:
+      parquet: narw_upcalls.parquet
     description: >
       Each row is one logged up-call detection. The population is every row
       in the raw log (NOPP6 deployment, channel 10), including calls marked
@@ -114,12 +124,6 @@ tables:
     constraints:
       - assert: time_end >= time
         description: A call can't end before it starts.
-    todo: |
-      - Day 7's last call is at 22:26 local. Confirm from the DCLDE 2013
-        metadata whether recording ran to midnight, or whether day 7 is partial.
-      - No `source`: the data are an .rds file and the `data-dict` validator
-        reads Parquet only, so this dictionary validates as a spec, not
-        against the data.
 
 glossary:
   up-call: >

@@ -1,0 +1,16 @@
+# Every data and model decision in the workflow. Paths are relative to this file.
+
+paths:
+  raw: data/raw/dclde_2013_nefsc_sbnms_200903_nopp6_ch10_detections_NEFSC_SBNMS_200903_NOPP6_CH10_upcall-detection-log.csv
+  table: data/narw_upcalls.parquet   # must match `source` in data/data-dict.yaml
+  dict: data/data-dict.yaml
+  output: output
+
+# Local clock at the recorder: fixed EST, as logged. Etc/GMT+5 is UTC-5.
+tz_local: Etc/GMT+5
+
+# Analysed window, local time. Recording and annotation ran continuously over
+# seven full days (NCEI ISO record; 672 contiguous 15-minute WAVs).
+window:
+  start: "2009-03-28 00:00:00"
+  end: "2009-04-04 00:00:00"
