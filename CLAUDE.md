@@ -12,3 +12,17 @@ it at home on Windows or Mac.
 - R, tidyverse where natural, succinct.
 - CRAN packages only, pure R: it has to install anywhere without a compiler.
 - A plain `run_all.R` runs the workflow, sourcing scripts in order.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for robschick/narw-upcall-workflow, via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
