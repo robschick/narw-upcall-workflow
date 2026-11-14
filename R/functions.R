@@ -12,7 +12,7 @@ read_config <- function(path = "config.yml") {
 # Stop with copy-paste install instructions if anything is missing.
 check_packages <- function() {
   pkgs <- c("dplyr", "readr", "lubridate", "tidyr", "purrr", "tibble", "ggplot2", "RColorBrewer",
-            "mgcv", "MASS", "yaml", "nanoparquet", "datadict", "quarto")
+            "mgcv", "MASS", "yaml", "nanoparquet", "datadict", "quarto", "knitr", "rmarkdown")
   missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
   if (length(missing)) {
     stop("Missing packages. Run:\n  install.packages(c(",
