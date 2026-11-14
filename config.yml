@@ -1,0 +1,35 @@
+# Every data and model decision in the workflow. Paths are relative to this file.
+
+paths:
+  raw: data/raw/dclde_2013_nefsc_sbnms_200903_nopp6_ch10_detections_NEFSC_SBNMS_200903_NOPP6_CH10_upcall-detection-log.csv
+  table: data/narw_upcalls.parquet   # must match `source` in data/data-dict.yaml
+  dict: data/data-dict.yaml
+  output: output
+
+# Local clock at the recorder: fixed EST, as logged. Etc/GMT+5 is UTC-5.
+tz_local: Etc/GMT+5
+
+# Analysed window, local time. Recording and annotation ran continuously over
+# seven full days (NCEI ISO record; 672 contiguous 15-minute WAVs).
+window:
+  start: "2009-03-28 00:00:00"
+  end: "2009-04-04 00:00:00"
+
+# Which calls go into the analysis (applied after the build, in 02_prepare.R).
+prepare:
+  confidence_keep: [Detected]   # add Possibly_Detected to include those calls
+  dedupe_same_start: true       # collapse rows sharing a start time
+
+# Width of the count bins, minutes. Bins are aligned to the window start.
+bin_width: 30
+
+# The four models (see 04_fit.R). All are fitted to the same bins.
+models:
+  glm_df: 7     # df of the natural spline in time for the two GLMs
+  k_time: 40    # basis size of the Gaussian-process smooth of time (GAMs)
+  k_hour: 12    # basis size of the cyclic smooth of hour of day (GAMs)
+  max_lag: 12   # bins of history in the self-exciting kernel (12 x 30 min = 6 h)
+  k_lag: 8      # basis size of the self-exciting kernel
+
+# Seed for the randomised quantile residuals (the only random step).
+seed: 20090328

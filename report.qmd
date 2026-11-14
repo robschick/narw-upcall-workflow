@@ -1,0 +1,369 @@
+---
+title: "Right whale up-calls, Stellwagen Bank, 28 March to 3 April 2009"
+subtitle: "From the raw log to a four-model comparison of calling rate"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+    fig-width: 8
+    fig-height: 4
+execute:
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+# The report only reads what run_all.R saved; it never refits anything.
+library(ggplot2)
+source("R/functions.R")
+cfg <- read_config("config.yml")
+out <- \(f) readRDS(file.path(cfg$paths$output, f))
+
+table <- nanoparquet::read_parquet(cfg$paths$table)
+calls <- out("calls.rds")
+bins  <- out("bins.rds")
+cmp   <- out("comparison.rds")
+
+theme_set(theme_minimal())
+pal  <- RColorBrewer::brewer.pal(8, "Dark2")
+grey <- RColorBrewer::brewer.pal(9, "Greys")
+model_cols <- setNames(pal[1:4], model_labels)
+lab <- \(m) factor(model_labels[m], levels = model_labels)
+n <- \(x) format(x, big.mark = ",")
+```
+
+# Data
+
+The data are one week of North Atlantic right whale up-calls logged by an
+analyst on one channel of the NOPP6 recorder in Stellwagen Bank National
+Marine Sanctuary (DCLDE 2013). Every step from the raw log to the counts
+the models see is shown here, with the number of rows it leaves.
+
+## From raw log to bins
+
+```{r}
+#| label: steps
+steps <- tibble::tibble(
+  Step = c("Raw log, built into the dictionary's table",
+           paste("Keep confidence:", toString(cfg$prepare$confidence_keep)),
+           "Collapse rows sharing a start time",
+           paste0(cfg$bin_width, "-minute bins (EST)")),
+  Rows = c(nrow(table),
+           sum(table$confidence %in% cfg$prepare$confidence_keep),
+           nrow(calls), nrow(bins))
+)
+knitr::kable(dplyr::mutate(steps, Rows = n(Rows)), align = "lr")
+```
+
+1. **Build** (`R/01_build.R`). The raw log becomes the table described in
+   `data/data-dict.yaml`. All `r n(nrow(table))` rows are kept, in log order,
+   and the table is checked against the dictionary with `datadict`. The run
+   stops if they disagree.
+2. **Prepare** (`R/02_prepare.R`). Only calls the analyst marked as
+   `r toString(cfg$prepare$confidence_keep)` are kept; this is
+   `confidence_keep` in `config.yml`. Rows sharing a start time are
+   collapsed to one, then the calls are sorted by time.
+3. **Bin** (`R/03_bin.R`). Calls are counted in `r cfg$bin_width`-minute
+   bins on local standard time (EST) over the whole window. Empty bins are
+   zero counts, not missing: recording was continuous. The bins hold all
+   `r n(sum(bins$y))` prepared calls.
+
+## Traps in the log
+
+**The log is not in time order.** It was written as one file per local
+day, and within a day some passages were logged out of sequence. In log
+order the start time steps backwards
+**`r sum(diff(table$time) < 0)` times**, by up to
+`r round(max(-diff(table$time)[diff(table$time) < 0]) / 3600, 1)` hours.
+Anything temporal (gaps, rates, lags) is computed after sorting by time.
+
+```{r}
+#| label: backward
+#| fig-height: 3
+steps_back <- tibble::tibble(row = seq_len(nrow(table) - 1),
+                             step = as.numeric(diff(table$time), units = "hours")) |>
+  dplyr::filter(step < 0)
+ggplot(steps_back, aes(row, -step)) +
+  geom_point(colour = pal[2]) +
+  scale_y_log10() +
+  labs(x = "Row of the log", y = "Backward step (hours, log scale)",
+       title = "Every place the log's start time goes backwards")
+```
+
+**Five pairs of rows share a start time.** They are probably the same call
+logged twice. With `dedupe_same_start: true` each pair keeps its
+higher-confidence row.
+
+```{r}
+#| label: duplicates
+table |>
+  dplyr::filter(dplyr::n() > 1, .by = time) |>
+  dplyr::mutate(time = format(lubridate::with_tz(time, cfg$tz_local), "%d %b %H:%M:%S EST")) |>
+  dplyr::select(time, selection, day, confidence, freq_low, freq_high) |>
+  knitr::kable()
+```
+
+**The time-zone trap.** `time` is stored and displayed in UTC, but local
+time at the recorder is 5 hours behind. Taking the hour of day straight
+from `time` shifts the whole diel cycle by 5 hours. Every hour in this
+workflow is computed on `r cfg$tz_local` (EST; the IANA sign is inverted).
+The log itself records every time with a fixed `-05:00` offset, even though
+clocks were on EDT in late March. Sunset at the recorder was about 18:05
+EST.
+
+```{r}
+#| label: tz-trap
+#| fig-height: 3.5
+by_hour <- dplyr::bind_rows(
+  tibble::tibble(clock = "Hour taken from time (UTC): wrong",
+                 hour = lubridate::hour(calls$time)),
+  tibble::tibble(clock = "Hour on EST: used here",
+                 hour = lubridate::hour(lubridate::with_tz(calls$time, cfg$tz_local)))
+)
+ggplot(by_hour, aes(hour)) +
+  geom_bar(fill = pal[3]) +
+  geom_vline(xintercept = 18.08, colour = grey[7], linetype = 2) +
+  facet_wrap(~clock) +
+  labs(x = "Hour of day (dashed: sunset, 18:05 EST)", y = "Calls in the week")
+```
+
+## Calling over the week
+
+```{r}
+#| label: week
+#| fig-height: 3.5
+caveat <- lubridate::ymd_hm(c("2009-03-29 14:30", "2009-03-29 16:30"), tz = cfg$tz_local)
+ggplot(bins, aes(bin, y)) +
+  annotate("rect", xmin = caveat[1], xmax = caveat[2], ymin = -Inf, ymax = Inf,
+           fill = pal[2], alpha = 0.3) +
+  geom_step(colour = grey[8]) +
+  scale_x_datetime(date_labels = "%d %b", date_breaks = "1 day", timezone = cfg$tz_local) +
+  labs(x = "EST", y = paste("Calls per", cfg$bin_width, "min"),
+       title = "Up-calls per bin; shaded: 29 March 14:30-16:30")
+```
+
+**Why 29 March 14:30–16:30 is kept.** The 2013 workshop's description of
+this deployment warns that its analyst could not log reliably during
+dense calling in that period. That warning was about those older logs.
+The log used here is a later re-annotation of the same channel, and it
+has heavy calling in that period. Recording was continuous, so the period
+is not a gap in effort, and nothing in the NCEI metadata excludes it. It
+is analysed like any other period. Excluding it would be a sensitivity
+analysis, which this report does not run.
+
+**Day 7 is complete.** The NCEI record gives the window as 28 March 00:00
+to 4 April 00:00 EST, and the archive holds 672 contiguous 15-minute audio
+files over that window. The last call, at 22:26 on 3 April, starts a quiet
+spell; it is not where effort ended.
+
+## Configuration in force
+
+Every decision above, and in the models below, comes from `config.yml`.
+These are the values that produced this report:
+
+```{r}
+#| label: config
+#| echo: false
+#| comment: ""
+cat(readLines("config.yml"), sep = "\n")
+```
+
+# Models
+
+All four models are fitted to the same `r nrow(bins)` bins, with the count
+per bin as the response and no offset (effort is the same in every bin).
+
+1. **Poisson GLM.** A natural spline in time
+   (`r cfg$models$glm_df` df) for the trend over the week, plus one
+   sine/cosine pair for the diel cycle.
+2. **Negative binomial GLM.** The same linear predictor, so the difference
+   from the Poisson GLM is overdispersion alone.
+3. **GAM LGCP.** This is a *GAM approximation to a log-Gaussian Cox
+   process*, not an LGCP fitted in continuous time. The counts are Poisson
+   given a latent Gaussian field on the log scale. The field has three
+   parts: a Gaussian-process smooth of time (`k = `r cfg$models$k_time``),
+   a cyclic smooth of hour of day (`k = `r cfg$models$k_hour``), and an
+   independent normal "nugget" for each bin. With the nugget, each count
+   is Poisson-lognormal. The fit uses `mgcv::bam` with fast REML.
+4. **GAM LGCP + self-exciting.** The GAM LGCP with the same smooths,
+   bases and `k`, plus a distributed-lag kernel. The log rate in each bin
+   depends on `log1p` of the counts in the previous
+   `r cfg$models$max_lag` bins
+   (`r cfg$models$max_lag * cfg$bin_width / 60` hours). The kernel's
+   shape is a smooth over lag, unconstrained in sign, so the data can show
+   self-damping as well as self-excitation. This is a *log-linear
+   self-exciting term, not a Hawkes process proper*: past calls multiply
+   the rate rather than adding to it. Bins before the window are taken as
+   zero counts.
+
+The comparison asks whether recent calling predicts more calling *beyond*
+a latent field of fixed flexibility.
+
+# Comparison
+
+```{r}
+#| label: metrics
+cmp$metrics |>
+  dplyr::transmute(Model = label, `df / edf` = round(df, 1),
+                   AIC = round(aic, 1), `ΔAIC` = round(d_aic, 1),
+                   `CV log-lik` = round(cv_loglik, 1), `ΔCV` = round(d_cv, 1)) |>
+  knitr::kable(align = "lrrrrr")
+```
+
+The table gives two criteria side by side and picks no winner. Lower
+AIC is better, and higher CV log-likelihood is better; both Δ columns show
+the distance from the best model.
+
+- **AIC** for the GAMs is mgcv's conditional AIC, which counts the
+  effective degrees of freedom of the smooths and the nugget.
+- **CV** is leave-one-day-out: each model is refitted on six days and
+  scored on the seventh. The GAMs have no estimate of the field on the
+  held-out day, so they predict it from the field's distribution: the
+  hour-of-day cycle plus a lognormal spread from the time smooth and the
+  nugget.
+- **The self-exciting model's CV score is one-step-ahead (conditional).**
+  Its kernel is re-estimated in each fold. On the held-out day, each bin is
+  predicted using that day's *observed* earlier counts. That uses
+  information the other models do not, so its CV score answers a different
+  question: how well can the next half hour be predicted, given the last
+  six hours?
+
+```{r}
+#| label: cv-days
+#| fig-height: 3.5
+ggplot(cmp$cv, aes(day, loglik, colour = lab(model))) +
+  geom_line() + geom_point() +
+  scale_colour_manual(values = model_cols) +
+  scale_x_continuous(breaks = 1:7) +
+  labs(x = "Held-out day", y = "Predictive log-likelihood", colour = NULL,
+       title = "Leave-one-day-out score per fold")
+```
+
+# Diagnostics
+
+## Residuals
+
+The residuals are randomised quantile residuals. If a model is right they
+are standard normal and independent. The GAM residuals integrate over the
+nugget, as the CV does. Otherwise each bin's own nugget would fit its
+count almost exactly.
+
+```{r}
+#| label: resid-qq
+#| fig-height: 4
+ggplot(cmp$resid, aes(sample = resid)) +
+  geom_qq(colour = pal[1], size = 0.8) +
+  geom_abline(colour = grey[6]) +
+  facet_wrap(~lab(model), nrow = 1) +
+  labs(x = "Normal quantile", y = "Residual")
+```
+
+```{r}
+#| label: resid-acf
+#| fig-height: 4
+bound <- 1.96 / sqrt(nrow(bins))
+ggplot(cmp$resid_acf, aes(lag * cfg$bin_width / 60, acf)) +
+  geom_hline(yintercept = c(-bound, bound), colour = grey[6], linetype = 2) +
+  geom_col(fill = pal[1]) +
+  facet_wrap(~lab(model), nrow = 1) +
+  labs(x = "Lag (hours)", y = "Residual autocorrelation",
+       title = "Serial dependence left over (dashed: ±1.96/√n)")
+```
+
+## Rootograms
+
+Hanging rootograms compare the observed and expected number of bins with
+each count. Bars hang from the expected curve, so a bar that ends above
+zero means the model expects too many bins with that count, and one that
+ends below zero means it expects too few. The square-root scale keeps
+rare large counts visible.
+
+```{r}
+#| label: rootogram
+#| fig-height: 5
+ggplot(cmp$rootogram, aes(count)) +
+  geom_rect(aes(xmin = count - 0.5, xmax = count + 0.5,
+                ymax = sqrt(expected), ymin = sqrt(expected) - sqrt(observed)),
+            fill = grey[4]) +
+  geom_line(aes(y = sqrt(expected)), colour = pal[2]) +
+  geom_hline(yintercept = 0, colour = grey[8]) +
+  facet_wrap(~lab(model), ncol = 2) +
+  labs(x = paste("Calls per", cfg$bin_width, "min"), y = "√ number of bins")
+```
+
+## Basis size (`k.check`)
+
+```{r}
+#| label: kcheck
+cmp$kcheck |>
+  dplyr::transmute(Model = lab(model), Term = term, `k'` = `k'`, edf = round(edf, 1),
+                   `k-index` = round(`k-index`, 2), `p-value` = signif(`p-value`, 2)) |>
+  knitr::kable()
+```
+
+A k-index well below 1 with a small p-value usually means a basis is too
+small. Here, for the time smooth, it does not. While building this
+workflow, doubling `k_time` from 40 to 80 raised the smooth's edf but left
+the k-index near 0.65, and AIC changed by about 1. The k-index measures
+dependence between residuals of neighbouring bins, and what remains is
+short-range clustering that the field's basis size cannot absorb. That is
+the clustering the self-exciting term tests for. The nugget is left out:
+a k-index means nothing for a random effect. The kernel has no k-index
+because it is a sum over lags rather than a smooth of one covariate.
+
+## Time smooths
+
+```{r}
+#| label: smooths
+#| fig-height: 4
+ggplot(cmp$smooth, aes(bin, fit, colour = lab(model), fill = lab(model))) +
+  geom_ribbon(aes(ymin = fit - 1.96 * se, ymax = fit + 1.96 * se),
+              alpha = 0.2, colour = NA) +
+  geom_line() +
+  scale_colour_manual(values = model_cols, aesthetics = c("colour", "fill")) +
+  scale_x_datetime(date_labels = "%d %b", date_breaks = "1 day", timezone = cfg$tz_local) +
+  labs(x = "EST", y = "s(t), log scale", colour = NULL, fill = NULL,
+       title = "Latent time smooth with and without the self-exciting term")
+```
+
+In the GAM LGCP the time smooth follows calling bout by bout
+(edf `r round(cmp$kcheck$edf[cmp$kcheck$model == "lgcp" & cmp$kcheck$term == "s(t)"], 1)`).
+Once the self-exciting term is added, much of that short-range structure
+moves into the kernel, and the time smooth relaxes to a slow trend
+(edf `r round(cmp$kcheck$edf[cmp$kcheck$model == "lgcp_se" & cmp$kcheck$term == "s(t)"], 1)`).
+The two terms trade off against each other, and the data alone cannot fully
+separate a smooth latent field from self-excitation.
+
+## The self-exciting kernel
+
+```{r}
+#| label: kernel
+#| fig-height: 3.5
+kernel <- cmp$kernel |>
+  dplyr::mutate(lo = fit - 1.96 * se, hi = fit + 1.96 * se,
+                shape = dplyr::case_when(lo > 0 ~ "Excitatory",
+                                         hi < 0 ~ "Damping",
+                                         .default = "Flat (band covers 0)"))
+ggplot(kernel, aes(hours, fit)) +
+  geom_hline(yintercept = 0, colour = grey[6]) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = grey[3]) +
+  geom_line(colour = grey[7]) +
+  geom_point(aes(colour = shape), size = 2.5) +
+  scale_colour_manual(values = c(Excitatory = pal[2], Damping = pal[3],
+                                 `Flat (band covers 0)` = grey[6])) +
+  labs(x = "Lag (hours)", y = "Effect of log1p(count) on log rate",
+       colour = NULL, title = "Fitted kernel with 95% band")
+```
+
+```{r}
+#| label: kernel-tail
+tail_flat <- all(kernel$shape[kernel$hours > max(kernel$hours) / 2] == "Flat (band covers 0)")
+```
+
+The kernel is the change in the log rate per unit of `log1p` count at
+each lag. For example, 10 calls in the bin 30 minutes earlier multiply
+the current rate by `r round(exp(log1p(10) * kernel$fit[1]), 1)`, with
+everything else held fixed.
+`r if (tail_flat) paste0("Over the second half of the ", max(kernel$hours), "-hour window every lag is flat, so the kernel has decayed well before the maximum lag and ", max(kernel$hours), " hours is long enough.") else paste0("Some lags in the second half of the ", max(kernel$hours), "-hour window are not flat, so the kernel may not have decayed by the maximum lag; consider a longer max_lag.")`
