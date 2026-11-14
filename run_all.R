@@ -6,3 +6,5 @@ check_packages()
 cfg <- read_config("config.yml")
 
 source("R/01_build.R")
+source("R/02_prepare.R")
+source("R/03_bin.R")

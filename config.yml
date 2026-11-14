@@ -14,3 +14,11 @@ tz_local: Etc/GMT+5
 window:
   start: "2009-03-28 00:00:00"
   end: "2009-04-04 00:00:00"
+
+# Which calls go into the analysis (applied after the build, in 02_prepare.R).
+prepare:
+  confidence_keep: [Detected]   # add Possibly_Detected to include those calls
+  dedupe_same_start: true       # collapse rows sharing a start time
+
+# Width of the count bins, minutes. Bins are aligned to the window start.
+bin_width: 30
